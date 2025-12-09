@@ -134,7 +134,7 @@ async def rephrase_text(req) -> Tuple[str, Optional[List[str]]]:
 async def _rephrase_with_ollama(req) -> Tuple[str, Optional[List[str]]]:
     """Use local Ollama model for rephrasing."""
     ollama_url = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://localhost:11434"))
-    model_name = os.getenv("OLLAMA_MODEL", "llama3.2")  # or "mistral", "gemma2", etc.
+    model_name = os.getenv("OLLAMA_MODEL", "llama3.2")  # or "mistral", "gemma2", "qwen2.5", etc.
     
     # Build a much more explicit prompt for neurodiverse learners
     neurotype_context = {
@@ -146,24 +146,24 @@ async def _rephrase_with_ollama(req) -> Tuple[str, Optional[List[str]]]:
     
     neuro_guidance = neurotype_context.get(req.neuroType or "unknown", neurotype_context["unknown"])
     
+    # More direct, example-based prompt that works better with smaller models
     prompt_parts = [
-        "You are a teacher helping a neurodiverse child understand a question.",
-        f"The child has: {req.neuroType or 'learning differences'}.",
-        f"Guidance: {neuro_guidance}",
+        "Task: Simplify this question for a 6-8 year old child.",
+        f"Child's needs: {req.neuroType or 'learning differences'}. {neuro_guidance}",
         "",
-        "CRITICAL INSTRUCTIONS:",
-        "1. You MUST rewrite the question in MUCH simpler language.",
-        "2. Use words a 6-8 year old would understand.",
-        "3. Break long sentences into shorter ones.",
-        "4. Replace complex words with simple ones (e.g., 'select' → 'choose', 'identify' → 'find').",
-        "5. DO NOT copy the original question - you MUST create a new, simpler version.",
-        "6. Keep the meaning and correct answer the same, but make it easier to understand.",
+        "RULES:",
+        "- DO NOT copy the original question",
+        "- Use simpler words: 'match' → 'find' or 'pick', 'correct' → 'right'",
+        "- Make sentences shorter",
         "",
-        f"Original question: {req.question}",
+        "EXAMPLES:",
+        "  'Match the picture to the correct word' → 'Find the word that goes with the picture'",
+        "  'Select the right answer' → 'Pick the right answer'",
+        "  'Identify the object' → 'Find the object'",
         "",
-        "Your task: Write a SIMPLER version of this question. Make it easier to understand.",
+        f"Original: {req.question}",
         "",
-        "Simplified question (write ONLY the simplified version, nothing else):"
+        "Simplified (write ONLY the simplified version, nothing else):"
     ]
     
     if req.confusionFlag:
@@ -261,8 +261,8 @@ async def _rephrase_with_ollama(req) -> Tuple[str, Optional[List[str]]]:
         simplified_text = simplified_text.strip('"\'')
         
         # Final validation - if it's still the same as original, try harder
-        if simplified_text.strip() == req.question or len(simplified_text.strip()) < 10:
-            print(f"Warning: Ollama response seems unchanged. Raw: {raw_response[:300]}")
+        if simplified_text.strip().lower() == req.question.strip().lower() or len(simplified_text.strip()) < 10:
+            print(f"⚠️ Ollama response seems unchanged. Raw: {raw_response[:300]}")
             # Try to extract any sentence that's different from the original
             sentences = raw_response.replace("\n", " ").split(".")
             for sentence in sentences:
@@ -276,20 +276,58 @@ async def _rephrase_with_ollama(req) -> Tuple[str, Optional[List[str]]]:
                     simplified_text = sentence
                     break
             
-            # If STILL no good result, create a simple fallback
-            if simplified_text.strip() == req.question or len(simplified_text.strip()) < 10:
-                # Create a basic simplification by replacing common complex words
+            # If STILL no good result, create a more aggressive fallback
+            if simplified_text.strip().lower() == req.question.strip().lower() or len(simplified_text.strip()) < 10:
+                print(f"⚠️ Ollama fallback triggered - original: '{req.question}'")
+                # Create a more aggressive simplification by replacing common complex words
                 fallback = req.question
-                replacements = {
-                    "select": "choose",
-                    "identify": "find",
-                    "determine": "figure out",
-                    "match": "pick",
-                    "click": "tap",
-                }
-                for old, new_word in replacements.items():
-                    fallback = fallback.replace(old, new_word)
-                simplified_text = fallback if fallback != req.question else f"Can you {req.question.lower()}?"
+                
+                # More comprehensive replacements (order matters - longer phrases first)
+                replacements = [
+                    ("match the picture to the correct word", "find the word that goes with the picture"),
+                    ("match the picture", "find the word for the picture"),
+                    ("match", "pick"),
+                    ("select", "choose"),
+                    ("identify", "find"),
+                    ("determine", "figure out"),
+                    ("click", "tap"),
+                    ("correct", "right"),
+                    ("the correct", "the right"),
+                    ("to the", "for the"),
+                ]
+                
+                # Apply replacements (case-insensitive)
+                fallback_lower = fallback.lower()
+                for old, new_word in replacements:
+                    if old in fallback_lower:
+                        # Find the position and replace with proper case
+                        idx = fallback_lower.find(old)
+                        if idx >= 0:
+                            # Try to preserve capitalization of first letter
+                            before = fallback[:idx]
+                            after = fallback[idx + len(old):]
+                            # Capitalize if it's at the start of sentence
+                            if idx == 0 or (idx > 0 and fallback[idx-1] in '.!?'):
+                                new_word_capitalized = new_word[0].upper() + new_word[1:] if len(new_word) > 0 else new_word
+                            else:
+                                new_word_capitalized = new_word
+                            fallback = before + new_word_capitalized + after
+                            fallback_lower = fallback.lower()
+                            break
+                
+                # If still unchanged, try a more aggressive rewrite
+                if fallback.strip().lower() == req.question.strip().lower():
+                    # For "Match the picture to the correct word" type questions
+                    if "match" in fallback_lower and "picture" in fallback_lower and "word" in fallback_lower:
+                        simplified_text = "Find the word that goes with the picture."
+                    elif "match" in fallback_lower:
+                        simplified_text = fallback.replace("match", "pick").replace("Match", "Pick")
+                    else:
+                        simplified_text = f"Can you {fallback.lower()}?"
+                else:
+                    simplified_text = fallback
+                
+                print(f"✅ Ollama fallback result: '{simplified_text}'")
         
         print(f"Final simplified text: {simplified_text[:100]}...")
         
@@ -336,19 +374,25 @@ async def _rephrase_with_gemini(req) -> Tuple[str, Optional[List[str]]]:
         f"The child has: {req.neuroType or 'learning differences'}.",
         f"Guidance: {neuro_guidance}",
         "",
-        "CRITICAL INSTRUCTIONS:",
-        "1. You MUST rewrite the question in MUCH simpler language.",
+        "CRITICAL INSTRUCTIONS - YOU MUST FOLLOW THESE:",
+        "1. You MUST rewrite the question in MUCH simpler language. DO NOT repeat the original question.",
         "2. Use words a 6-8 year old would understand.",
         "3. Break long sentences into shorter ones.",
-        "4. Replace complex words with simple ones (e.g., 'select' → 'choose', 'identify' → 'find').",
-        "5. DO NOT copy the original question - you MUST create a new, simpler version.",
-        "6. Keep the meaning and correct answer the same, but make it easier to understand.",
+        "4. Replace complex words with simple ones:",
+        "   - 'match' → 'pick' or 'find' or 'choose'",
+        "   - 'select' → 'choose' or 'pick'",
+        "   - 'identify' → 'find' or 'point to'",
+        "   - 'determine' → 'figure out'",
+        "   - 'correct' → 'right'",
+        "5. DO NOT copy the original question word-for-word. You MUST create a NEW, simpler version.",
+        "6. If the question says 'Match the picture to the correct word', rewrite it as 'Find the word that goes with the picture' or 'Pick the word that matches the picture'.",
+        "7. Keep the meaning the same, but use simpler words and shorter sentences.",
         "",
         f"Original question: {req.question}",
         "",
-        "Your task: Write a SIMPLER version of this question. Make it easier to understand.",
+        "IMPORTANT: Write ONLY the simplified question. Do NOT include the original question. Do NOT say 'Here is the simplified version:' or similar. Just write the simplified question directly.",
         "",
-        "Simplified question (write ONLY the simplified version, nothing else):"
+        "Simplified question:"
     ]
     
     if req.confusionFlag:
@@ -497,20 +541,58 @@ async def _rephrase_with_gemini(req) -> Tuple[str, Optional[List[str]]]:
                     simplified_text = sentence
                     break
             
-            # If STILL no good result, create a simple fallback
-            if simplified_text.strip() == req.question or len(simplified_text.strip()) < 10:
-                # Create a basic simplification by replacing common complex words
+            # If STILL no good result, create a more aggressive fallback
+            if simplified_text.strip().lower() == req.question.strip().lower() or len(simplified_text.strip()) < 10:
+                print(f"⚠️ Gemini fallback triggered - original: '{req.question}'")
+                # Create a more aggressive simplification by replacing common complex words
                 fallback = req.question
-                replacements = {
-                    "select": "choose",
-                    "identify": "find",
-                    "determine": "figure out",
-                    "match": "pick",
-                    "click": "tap",
-                }
-                for old, new_word in replacements.items():
-                    fallback = fallback.replace(old, new_word)
-                simplified_text = fallback if fallback != req.question else f"Can you {req.question.lower()}?"
+                
+                # More comprehensive replacements (order matters - longer phrases first)
+                replacements = [
+                    ("match the picture to the correct word", "find the word that goes with the picture"),
+                    ("match the picture", "find the word for the picture"),
+                    ("match", "pick"),
+                    ("select", "choose"),
+                    ("identify", "find"),
+                    ("determine", "figure out"),
+                    ("click", "tap"),
+                    ("correct", "right"),
+                    ("the correct", "the right"),
+                    ("to the", "for the"),
+                ]
+                
+                # Apply replacements (case-insensitive)
+                fallback_lower = fallback.lower()
+                for old, new_word in replacements:
+                    if old in fallback_lower:
+                        # Find the position and replace with proper case
+                        idx = fallback_lower.find(old)
+                        if idx >= 0:
+                            # Try to preserve capitalization of first letter
+                            before = fallback[:idx]
+                            after = fallback[idx + len(old):]
+                            # Capitalize if it's at the start of sentence
+                            if idx == 0 or (idx > 0 and fallback[idx-1] in '.!?'):
+                                new_word_capitalized = new_word[0].upper() + new_word[1:] if len(new_word) > 0 else new_word
+                            else:
+                                new_word_capitalized = new_word
+                            fallback = before + new_word_capitalized + after
+                            fallback_lower = fallback.lower()
+                            break
+                
+                # If still unchanged, try a more aggressive rewrite
+                if fallback.strip().lower() == req.question.strip().lower():
+                    # For "Match the picture to the correct word" type questions
+                    if "match" in fallback_lower and "picture" in fallback_lower and "word" in fallback_lower:
+                        simplified_text = "Find the word that goes with the picture."
+                    elif "match" in fallback_lower:
+                        simplified_text = fallback.replace("match", "pick").replace("Match", "Pick")
+                    else:
+                        simplified_text = f"Can you {fallback.lower()}?"
+                else:
+                    simplified_text = fallback
+                
+                print(f"✅ Gemini fallback result: '{simplified_text}'")
         
         print(f"Final simplified text: {simplified_text[:150]}...")
             
@@ -526,10 +608,44 @@ async def _rephrase_with_gemini(req) -> Tuple[str, Optional[List[str]]]:
         print(f"Gemini API error {status_code}: {error_msg}")
         print(f"URL used: {url_with_key}")  # Show URL
         
-        # Handle quota exceeded gracefully - return original text instead of crashing
+        # Handle quota exceeded gracefully - apply fallback simplification
         if status_code == 429:
-            print("Quota exceeded - returning original text as fallback")
-            return req.question, req.options
+            print("⚠️ Quota exceeded - applying fallback simplification")
+            # Apply the same fallback logic as in Ollama function
+            fallback = req.question
+            replacements = [
+                ("match the picture to the correct word", "find the word that goes with the picture"),
+                ("match the picture", "find the word for the picture"),
+                ("match", "pick"),
+                ("select", "choose"),
+                ("identify", "find"),
+                ("determine", "figure out"),
+                ("click", "tap"),
+                ("correct", "right"),
+                ("the correct", "the right"),
+                ("to the", "for the"),
+            ]
+            fallback_lower = fallback.lower()
+            for old, new_word in replacements:
+                if old in fallback_lower:
+                    idx = fallback_lower.find(old)
+                    if idx >= 0:
+                        before = fallback[:idx]
+                        after = fallback[idx + len(old):]
+                        if idx == 0 or (idx > 0 and fallback[idx-1] in '.!?'):
+                            new_word_capitalized = new_word[0].upper() + new_word[1:] if len(new_word) > 0 else new_word
+                        else:
+                            new_word_capitalized = new_word
+                        fallback = before + new_word_capitalized + after
+                        fallback_lower = fallback.lower()
+                        break
+            if fallback.strip().lower() == req.question.strip().lower():
+                if "match" in fallback_lower and "picture" in fallback_lower and "word" in fallback_lower:
+                    fallback = "Find the word that goes with the picture."
+                elif "match" in fallback_lower:
+                    fallback = fallback.replace("match", "pick").replace("Match", "Pick")
+            print(f"✅ Fallback result: '{fallback}'")
+            return fallback, req.options
         
         raise Exception(f"LLM API error {status_code}: {error_msg}")
     except httpx.RequestError as e:

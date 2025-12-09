@@ -159,6 +159,13 @@ export interface SubmitPayload {
   focusRating: number; // 1–5
   feedbackText?: string;
   attentionScore?: number;
+  lessonId?: string;
+  // Well-Being Layer: Support mode tracking
+  supportMode?: string | null; // "ADHD_BREAK", "DYSLEXIA_SUPPORT", "ASD_CALM"
+  breakTriggered?: boolean;
+  breakReason?: string | null;
+  consecutiveWrong?: number;
+  wrongInLast5?: number;
 }
 
 export async function submitActivity(payload: SubmitPayload) {

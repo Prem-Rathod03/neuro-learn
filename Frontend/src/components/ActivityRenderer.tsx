@@ -17,6 +17,8 @@ interface ActivityRendererProps {
   selectedAnswers: string[];
   onSelectAnswer: (optionId: string) => void;
   onSelectMultiple?: (optionId: string) => void; // For focus_filter activities
+  supportBoost?: boolean; // Dyslexia support mode
+  calmMode?: boolean; // ASD calm mode
 }
 
 export const ActivityRenderer: React.FC<ActivityRendererProps> = ({
@@ -24,9 +26,19 @@ export const ActivityRenderer: React.FC<ActivityRendererProps> = ({
   selectedAnswers,
   onSelectAnswer,
   onSelectMultiple,
+  supportBoost = false,
+  calmMode = false,
 }) => {
   const { user } = useAuth();
   const { speak } = useTextToSpeech();
+  
+  // Well-Being Layer: Auto-play instruction for Dyslexia support
+  React.useEffect(() => {
+    if (supportBoost && activity?.instructionTts) {
+      // Auto-play instruction when support boost is enabled
+      speak(activity.instructionTts);
+    }
+  }, [supportBoost, activity?.instructionTts, speak]);
 
   // Check neuroFlags for feature toggles
   const hasDyslexia = user?.neuroFlags?.includes('Dyslexia') || user?.neurodiversityTags?.includes('Dyslexia');

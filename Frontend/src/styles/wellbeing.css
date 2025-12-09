@@ -1,0 +1,77 @@
+/**
+ * Well-Being Layer Styles
+ * Neurotype-specific support modes
+ */
+
+/* Dyslexia Support Mode */
+.dyslexia-mode {
+  font-family: 'Arial', 'OpenDyslexic', sans-serif;
+}
+
+.dyslexia-mode * {
+  font-size: 1.15em !important;
+  line-height: 1.8 !important;
+  letter-spacing: 0.05em;
+}
+
+.dyslexia-mode .text-sm {
+  font-size: 1em !important;
+}
+
+.dyslexia-mode .text-lg {
+  font-size: 1.3em !important;
+}
+
+.dyslexia-mode .text-2xl {
+  font-size: 1.8em !important;
+}
+
+.dyslexia-mode button,
+.dyslexia-mode .button {
+  padding: 0.75rem 1.5rem;
+  font-size: 1.1em;
+}
+
+/* ASD Calm Mode */
+.calm-mode {
+  /* Remove animations */
+  animation: none !important;
+  transition: none !important;
+}
+
+.calm-mode * {
+  animation: none !important;
+  transition: background-color 0.2s ease, color 0.2s ease !important;
+}
+
+.calm-mode button:hover,
+.calm-mode .button:hover {
+  transform: none !important;
+  scale: 1 !important;
+}
+
+/* Fixed feedback icons for calm mode */
+.calm-mode .success-icon {
+  color: #22c55e;
+  font-size: 1.5em;
+}
+
+.calm-mode .error-icon {
+  color: #ef4444;
+  font-size: 1.5em;
+}
+
+/* Predictable layout */
+.calm-mode .activity-container {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+/* Step indicators */
+.step-indicator {
+  font-size: 0.875rem;
+  color: #6b7280;
+  text-align: center;
+  margin-bottom: 1rem;
+}
+

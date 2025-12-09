@@ -15,6 +15,7 @@ import { ActivityRenderer } from '@/components/ActivityRenderer';
 import { ActivityItem } from '@/types/activity';
 import { useTextToSpeech } from '@/hooks/useTextToSpeech';
 import { getActivityById, getActivitiesByLesson, getActivitiesByModule, getNextActivityInSequence } from '@/data/activityItems';
+import { ADHDBreakModal } from '@/components/ADHDBreakModal';
 
 const LearningActivity = () => {
   const { moduleId } = useParams<{ moduleId: string }>();
@@ -38,6 +39,18 @@ const LearningActivity = () => {
   // Track lesson progress
   const [currentLessonProgress, setCurrentLessonProgress] = useState({ completed: 0, total: 0 });
   const [completedActivitiesInLesson, setCompletedActivitiesInLesson] = useState<Set<string>>(new Set());
+  
+  // Well-Being Layer: Support tracking
+  const [consecutiveWrong, setConsecutiveWrong] = useState(0);
+  const [wrongInLast5, setWrongInLast5] = useState<boolean[]>([]); // Last 5 answers: true = wrong, false = correct
+  const [questionsSinceLastBreak, setQuestionsSinceLastBreak] = useState(0);
+  const [lastBreakAt, setLastBreakAt] = useState<number | null>(null);
+  
+  // Support modes
+  const [showBreakModal, setShowBreakModal] = useState(false);
+  const [supportBoost, setSupportBoost] = useState(false); // Dyslexia support
+  const [calmMode, setCalmMode] = useState(false); // ASD calm mode
+  const [currentSupportMode, setCurrentSupportMode] = useState<string | null>(null);
 
   // Load saved progress from localStorage on mount
   useEffect(() => {
@@ -270,6 +283,11 @@ const LearningActivity = () => {
     setSubmitting(true);
     const timeTaken = (Date.now() - startTime) / 1000;
 
+    // Well-Being Layer: Check neuroFlags
+    const hasADHD = user?.neuroFlags?.includes('ADHD') || user?.neurodiversityTags?.includes('ADHD');
+    const hasDyslexia = user?.neuroFlags?.includes('Dyslexia') || user?.neurodiversityTags?.includes('Dyslexia');
+    const hasASD = user?.neuroFlags?.includes('ASD') || user?.neuroFlags?.includes('Autism') || user?.neurodiversityTags?.includes('ASD') || user?.neurodiversityTags?.includes('Autism');
+
     let isCorrect = false;
     if (activity.type === 'focus_filter') {
       const correctSelections = activity.options.filter(
@@ -281,6 +299,76 @@ const LearningActivity = () => {
       isCorrect = selectedOption?.isCorrect || false;
     }
 
+    // Well-Being Layer: Update support tracking
+    let newConsecutiveWrong = consecutiveWrong;
+    let newWrongInLast5 = [...wrongInLast5];
+    let supportModeToSend: string | null = null;
+    let breakTriggered = false;
+    let breakReason: string | null = null;
+
+    if (isCorrect) {
+      // Reset consecutive wrong on correct answer
+      newConsecutiveWrong = 0;
+      newWrongInLast5 = [...wrongInLast5.slice(-4), false]; // Keep last 4, add false
+    } else {
+      // Increment consecutive wrong
+      newConsecutiveWrong = consecutiveWrong + 1;
+      newWrongInLast5 = [...wrongInLast5.slice(-4), true]; // Keep last 4, add true
+    }
+
+    const wrongCountInLast5 = newWrongInLast5.filter(w => w).length;
+
+    // Check ADHD triggers
+    if (hasADHD && !showBreakModal) {
+      if (newConsecutiveWrong >= 3 || wrongCountInLast5 >= 4) {
+        setShowBreakModal(true);
+        breakTriggered = true;
+        breakReason = newConsecutiveWrong >= 3 ? 'ADHD_consecutive_wrong' : 'ADHD_wrong_in_last_5';
+        supportModeToSend = 'ADHD_BREAK';
+        setConsecutiveWrong(0); // Reset after break trigger
+        setWrongInLast5([]);
+        setQuestionsSinceLastBreak(0);
+        setLastBreakAt(Date.now());
+      }
+    }
+
+    // Check Dyslexia triggers
+    if (hasDyslexia && !supportBoost) {
+      const isReadingTask = activity.type === 'image_to_word' || activity.type === 'instruction_to_image' || activity.type === 'one_step_instruction';
+      if (isReadingTask && (newConsecutiveWrong >= 2 || (timeTaken > 60 && activity.difficulty === 'hard'))) {
+        setSupportBoost(true);
+        supportModeToSend = 'DYSLEXIA_SUPPORT';
+        toast({
+          title: 'Reading Support Enabled',
+          description: 'We\'ve enabled extra reading help. Tap 🔊 to hear words, or hover over them.',
+          variant: 'default',
+        });
+      }
+    }
+
+    // Check ASD triggers
+    if (hasASD && !calmMode) {
+      // Check for confusion in feedback
+      const hasConfusion = feedback.toLowerCase().includes('confus') || feedback.toLowerCase().includes("don't understand");
+      // Check for high time taken with low errors (freezing/overthinking)
+      const isFreezing = timeTaken > 90 && newConsecutiveWrong < 2;
+      
+      if (hasConfusion || isFreezing) {
+        setCalmMode(true);
+        supportModeToSend = 'ASD_CALM';
+        toast({
+          title: 'Calm Mode Enabled',
+          description: 'We\'ve enabled a more predictable learning mode to help you focus.',
+          variant: 'default',
+        });
+      }
+    }
+
+    // Update state
+    setConsecutiveWrong(newConsecutiveWrong);
+    setWrongInLast5(newWrongInLast5);
+    setQuestionsSinceLastBreak(questionsSinceLastBreak + 1);
+
     await submitActivity({
       activityId: activity.id,
       answer: selectedAnswers.join(','),
@@ -291,7 +379,18 @@ const LearningActivity = () => {
       feedbackText: feedback,
       attentionScore: 0.7,
       lessonId: activity.lessonId,
+      supportMode: supportModeToSend,
+      breakTriggered,
+      breakReason,
+      consecutiveWrong: newConsecutiveWrong,
+      wrongInLast5: wrongCountInLast5,
     });
+
+    // If ADHD break triggered, don't proceed until break is complete
+    if (breakTriggered) {
+      setSubmitting(false);
+      return;
+    }
 
     if (isCorrect) {
       // Mark this activity as completed in current lesson
@@ -485,6 +584,26 @@ const LearningActivity = () => {
             </div>
           )}
 
+          {/* Well-Being Layer: Support Mode Indicators */}
+          {supportBoost && (
+            <Card className="p-3 bg-blue-50 border-blue-200">
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-lg">🔊</span>
+                <span className="font-medium">Reading Support Active</span>
+                <span className="text-muted-foreground">- Tap 🔊 or hover over words to hear them</span>
+              </div>
+            </Card>
+          )}
+          {calmMode && (
+            <Card className="p-3 bg-green-50 border-green-200">
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-lg">🌿</span>
+                <span className="font-medium">Calm Mode Active</span>
+                <span className="text-muted-foreground">- Predictable layout, minimal changes</span>
+              </div>
+            </Card>
+          )}
+
           {/* Progress Bar - Shows current lesson progress */}
           {showProgressBar && currentLessonProgress.total > 0 && (
             <Card className="p-4">
@@ -510,21 +629,36 @@ const LearningActivity = () => {
             </div>
           )}
 
-          <Card className="p-8 md:p-12 shadow-elevated">
-            <div className="space-y-8">
-              <div className="text-center space-y-4">
-                <Button variant="outline" size="lg" onClick={handleRepeatInstruction} className="gap-2">
-                  <Volume2 className="w-5 h-5" />
-                  Hear/Repeat Question
-                </Button>
-              </div>
+                  <Card className={`p-8 md:p-12 shadow-elevated ${supportBoost ? 'dyslexia-mode' : ''} ${calmMode ? 'calm-mode' : ''}`}>
+                    <div className="space-y-8">
+                      {/* Well-Being Layer: Step indicator for ASD calm mode */}
+                      {calmMode && activity && (
+                        <div className="text-center text-sm text-muted-foreground">
+                          Step {completedActivitiesInLesson.size + 1} of {currentLessonProgress.total}
+                        </div>
+                      )}
 
-              <ActivityRenderer
-                activity={activity}
-                selectedAnswers={selectedAnswers}
-                onSelectAnswer={handleSelectAnswer}
-                onSelectMultiple={handleSelectMultiple}
-              />
+                      <div className="text-center space-y-4">
+                        <Button variant="outline" size="lg" onClick={handleRepeatInstruction} className="gap-2">
+                          <Volume2 className="w-5 h-5" />
+                          Hear/Repeat Question
+                        </Button>
+                        {/* Auto-play instruction for Dyslexia support */}
+                        {supportBoost && activity && (
+                          <p className="text-xs text-muted-foreground">
+                            💡 Tip: The question will be read automatically. Hover over words to hear them.
+                          </p>
+                        )}
+                      </div>
+
+                      <ActivityRenderer
+                        activity={activity}
+                        selectedAnswers={selectedAnswers}
+                        onSelectAnswer={handleSelectAnswer}
+                        onSelectMultiple={handleSelectMultiple}
+                        supportBoost={supportBoost}
+                        calmMode={calmMode}
+                      />
 
               <div className="space-y-3">
                 <div className="flex flex-wrap gap-3">
@@ -556,11 +690,26 @@ const LearningActivity = () => {
               <ChevronRight className="w-5 h-5" />
             </Button>
           </div>
-        </div>
-      </main>
-    </div>
-  );
-};
+            </div>
+          </main>
 
-export default LearningActivity;
+          {/* Well-Being Layer: ADHD Break Modal */}
+          <ADHDBreakModal
+            open={showBreakModal}
+            onComplete={() => {
+              setShowBreakModal(false);
+              setConsecutiveWrong(0);
+              setWrongInLast5([]);
+              setQuestionsSinceLastBreak(0);
+              setLastBreakAt(Date.now());
+              // Load next activity (potentially easier)
+              loadNext();
+            }}
+            durationSeconds={60}
+          />
+        </div>
+      );
+    };
+
+    export default LearningActivity;
 

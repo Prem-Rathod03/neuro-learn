@@ -115,6 +115,14 @@ class SubmitRequest(BaseModel):
   feedbackText: Optional[str] = None
   userId: Optional[str] = None
   attentionScore: Optional[float] = None
+  # Add lessonId to payload for better tracking
+  lessonId: Optional[str] = None
+  # Well-Being Layer: Support mode tracking
+  supportMode: Optional[str] = None  # "ADHD_BREAK", "DYSLEXIA_SUPPORT", "ASD_CALM"
+  breakTriggered: Optional[bool] = None
+  breakReason: Optional[str] = None
+  consecutiveWrong: Optional[int] = None
+  wrongInLast5: Optional[int] = None
 
 
 @router.get("/next")
@@ -290,7 +298,8 @@ async def submit_activity(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     interactions = db["interactions"]
-    doc = payload.dict()
+    # Use model_dump() for Pydantic v2, fallback to dict() for v1
+    doc = payload.model_dump() if hasattr(payload, 'model_dump') else payload.dict()
     doc["timestamp"] = datetime.utcnow()
 
     # 🔹 Run pretrained NLP (or simple version) on feedback text
