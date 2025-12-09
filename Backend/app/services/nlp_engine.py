@@ -4,8 +4,16 @@ import os
 from typing import Tuple, Optional, List
 
 import httpx
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-import torch
+
+# Try to import transformers and torch, but don't fail if they're not available
+try:
+    from transformers import AutoTokenizer, AutoModelForSequenceClassification
+    import torch
+    TRANSFORMERS_AVAILABLE = True
+except (ImportError, PermissionError, OSError) as e:
+    print(f"⚠️ Warning: Transformers/Torch not available: {e}")
+    print("   Falling back to simple sentiment analysis")
+    TRANSFORMERS_AVAILABLE = False
 
 # Load DistilBERT model for sentiment analysis
 _tokenizer = None
@@ -15,16 +23,63 @@ _model = None
 def _load_transformer():
     """Lazy load the DistilBERT model on first use."""
     global _tokenizer, _model
+    if not TRANSFORMERS_AVAILABLE:
+        return False
+    
     if _tokenizer is None or _model is None:
-        model_name = "distilbert-base-uncased-finetuned-sst-2-english"
-        _tokenizer = AutoTokenizer.from_pretrained(model_name)
-        _model = AutoModelForSequenceClassification.from_pretrained(model_name)
-        _model.eval()  # Set to evaluation mode
+        try:
+            model_name = "distilbert-base-uncased-finetuned-sst-2-english"
+            print(f"Loading DistilBERT model: {model_name}...")
+            _tokenizer = AutoTokenizer.from_pretrained(model_name)
+            _model = AutoModelForSequenceClassification.from_pretrained(model_name)
+            _model.eval()  # Set to evaluation mode
+            print("✓ DistilBERT loaded successfully")
+            return True
+        except Exception as e:
+            print(f"⚠️ Failed to load DistilBERT: {e}")
+            return False
+    return True
+
+
+def _simple_sentiment_analysis(text: str) -> Tuple[float, bool]:
+    """
+    Fallback: Simple rule-based sentiment analysis.
+    Used when transformers/torch are not available.
+    """
+    text_lower = text.lower()
+    
+    # Negative keywords
+    negative_words = [
+        'confus', 'difficult', 'hard', 'don\'t understand', 'unclear',
+        'frustrated', 'impossible', 'wrong', 'bad', 'hate', 'terrible',
+        'not clear', 'too hard', 'can\'t', 'cannot'
+    ]
+    
+    # Positive keywords
+    positive_words = [
+        'easy', 'fun', 'like', 'good', 'great', 'understand', 'clear',
+        'enjoy', 'love', 'helpful', 'excellent', 'perfect'
+    ]
+    
+    # Count matches
+    negative_count = sum(1 for word in negative_words if word in text_lower)
+    positive_count = sum(1 for word in positive_words if word in text_lower)
+    
+    # Calculate simple sentiment score
+    if negative_count + positive_count == 0:
+        return 0.0, False
+    
+    sentiment_score = (positive_count - negative_count) / (positive_count + negative_count)
+    confusion_flag = sentiment_score < -0.3
+    
+    return sentiment_score, confusion_flag
 
 
 def analyze_feedback(text: str) -> Tuple[float, bool]:
     """
     Analyze free-text feedback using DistilBERT for sentiment analysis.
+    Falls back to simple rule-based analysis if transformers are not available.
+    
     Returns:
     - sentiment_score: between -1.0 (very negative) and +1.0 (very positive)
     - confusion_flag: True if sentiment is negative (suggests confusion/difficulty)
@@ -32,28 +87,34 @@ def analyze_feedback(text: str) -> Tuple[float, bool]:
     if not text:
         return 0.0, False
 
-    # Load model on first call
-    _load_transformer()
+    # Try to load and use DistilBERT
+    if TRANSFORMERS_AVAILABLE and _load_transformer():
+        try:
+            # Tokenize and run inference
+            inputs = _tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
+            
+            with torch.no_grad():
+                outputs = _model(**inputs)
+                probs = torch.softmax(outputs.logits, dim=-1)[0]
 
-    # Tokenize and run inference
-    inputs = _tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
-    
-    with torch.no_grad():
-        outputs = _model(**inputs)
-        probs = torch.softmax(outputs.logits, dim=-1)[0]
+            # Extract probabilities
+            # Index 0 = negative, Index 1 = positive (for SST-2)
+            neg_prob = float(probs[0])
+            pos_prob = float(probs[1])
+            
+            # Calculate sentiment score: -1 (very negative) to +1 (very positive)
+            sentiment_score = pos_prob - neg_prob
+            
+            # Flag as confused if sentiment is negative (below threshold)
+            confusion_flag = sentiment_score < -0.3
 
-    # Extract probabilities
-    # Index 0 = negative, Index 1 = positive (for SST-2)
-    neg_prob = float(probs[0])
-    pos_prob = float(probs[1])
-    
-    # Calculate sentiment score: -1 (very negative) to +1 (very positive)
-    sentiment_score = pos_prob - neg_prob
-    
-    # Flag as confused if sentiment is negative (below threshold)
-    confusion_flag = sentiment_score < -0.3
-
-    return sentiment_score, confusion_flag
+            return sentiment_score, confusion_flag
+        except Exception as e:
+            print(f"⚠️ DistilBERT inference failed: {e}, using simple analysis")
+            return _simple_sentiment_analysis(text)
+    else:
+        # Fallback to simple rule-based analysis
+        return _simple_sentiment_analysis(text)
 
 
 async def rephrase_text(req) -> Tuple[str, Optional[List[str]]]:
@@ -75,27 +136,44 @@ async def _rephrase_with_ollama(req) -> Tuple[str, Optional[List[str]]]:
     ollama_url = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://localhost:11434"))
     model_name = os.getenv("OLLAMA_MODEL", "llama3.2")  # or "mistral", "gemma2", etc.
     
-    # Build a clearer prompt that asks for just the simplified question
-    prompt_parts = [
-        "You are helping a neurodiverse student understand a multiple-choice question.",
-        f"Neurotype: {req.neuroType or 'unknown'}.",
-        f"Difficulty level: {req.difficulty or 'unknown'}.",
-    ]
-    if req.confusionFlag:
-        prompt_parts.append("The student is confused. Please simplify the language significantly.")
+    # Build a much more explicit prompt for neurodiverse learners
+    neurotype_context = {
+        "Dyslexia": "Use simple words, short sentences, and avoid complex spelling. Break down instructions into clear steps.",
+        "ADHD": "Use direct, action-oriented language. Be very clear and concise. Remove unnecessary words.",
+        "ASD": "Use literal language, avoid metaphors or idioms. Be explicit and step-by-step.",
+        "unknown": "Use simple, clear language suitable for a young learner."
+    }
     
-    prompt_parts.append(
-        "IMPORTANT: Rephrase ONLY the question below into simpler, kid-friendly language. "
-        "Use shorter sentences and easier words. Do NOT repeat the original question. "
-        "Just provide the simplified version."
-    )
-    prompt_parts.append(f"\nOriginal question: {req.question}")
+    neuro_guidance = neurotype_context.get(req.neuroType or "unknown", neurotype_context["unknown"])
+    
+    prompt_parts = [
+        "You are a teacher helping a neurodiverse child understand a question.",
+        f"The child has: {req.neuroType or 'learning differences'}.",
+        f"Guidance: {neuro_guidance}",
+        "",
+        "CRITICAL INSTRUCTIONS:",
+        "1. You MUST rewrite the question in MUCH simpler language.",
+        "2. Use words a 6-8 year old would understand.",
+        "3. Break long sentences into shorter ones.",
+        "4. Replace complex words with simple ones (e.g., 'select' → 'choose', 'identify' → 'find').",
+        "5. DO NOT copy the original question - you MUST create a new, simpler version.",
+        "6. Keep the meaning and correct answer the same, but make it easier to understand.",
+        "",
+        f"Original question: {req.question}",
+        "",
+        "Your task: Write a SIMPLER version of this question. Make it easier to understand.",
+        "",
+        "Simplified question (write ONLY the simplified version, nothing else):"
+    ]
+    
+    if req.confusionFlag:
+        prompt_parts.insert(3, "⚠️ The student is confused and needs extra help. Simplify even more!")
+    
     if req.options:
-        prompt_parts.append("\nOptions (you can simplify these too if needed):")
+        prompt_parts.append("")
+        prompt_parts.append("Options (you can simplify these too):")
         for i, opt in enumerate(req.options):
             prompt_parts.append(f"{chr(65+i)}. {opt}")
-    
-    prompt_parts.append("\n\nSimplified question:")
     
     prompt = "\n".join(prompt_parts)
     
@@ -122,54 +200,96 @@ async def _rephrase_with_ollama(req) -> Tuple[str, Optional[List[str]]]:
         print(f"Ollama raw response (first 300 chars): {raw_response[:300]}")
         
         # Parse the response - extract just the simplified question
-        simplified_text = raw_response
+        simplified_text = raw_response.strip()
         
-        # Try to find the simplified question after "Simplified question:" marker
-        if "Simplified question:" in simplified_text:
-            parts = simplified_text.split("Simplified question:", 1)
-            if len(parts) > 1:
-                simplified_text = parts[1].strip()
+        # Remove common markers and prefixes
+        markers = [
+            "Simplified question:",
+            "Simplified question (write ONLY the simplified version, nothing else):",
+            "Here's the simplified version:",
+            "Simplified version:",
+            "Here's a simpler version:",
+            "The simplified question is:",
+            "Simplified:",
+        ]
+        for marker in markers:
+            if marker in simplified_text:
+                parts = simplified_text.split(marker, 1)
+                if len(parts) > 1:
+                    simplified_text = parts[1].strip()
+                    break
         
-        # Remove the original question if it appears in the response
+        # Remove the original question if it appears anywhere in the response
         if req.question in simplified_text:
-            # Split by the original question and take the part after it
+            # Try to extract text that comes AFTER the original question
             parts = simplified_text.split(req.question, 1)
             if len(parts) > 1 and parts[1].strip():
                 simplified_text = parts[1].strip()
+            # Or try to extract text that comes BEFORE the original question
             elif len(parts) > 0 and parts[0].strip() and parts[0] != req.question:
                 simplified_text = parts[0].strip()
+            # If original question is the whole response, try to find any different text
+            else:
+                # Split by newlines and find the first line that's different
+                lines = simplified_text.split("\n")
+                for line in lines:
+                    line = line.strip()
+                    if line and line != req.question and len(line) > 10:
+                        # Check if this line is substantially different (not just a substring)
+                        if (line.lower() != req.question.lower() and 
+                            req.question.lower() not in line.lower() and
+                            line.lower() not in req.question.lower()):
+                            simplified_text = line
+                            break
         
         # Clean up common prefixes/suffixes
         prefixes_to_remove = [
-            "Here's a simpler version:",
-            "Simplified version:",
-            "Here's the simplified question:",
-            "The simplified question is:",
+            "Here's",
+            "Here is",
+            "The simplified question is",
+            "Simplified:",
+            "Answer:",
         ]
         for prefix in prefixes_to_remove:
-            if simplified_text.startswith(prefix):
+            if simplified_text.lower().startswith(prefix.lower()):
                 simplified_text = simplified_text[len(prefix):].strip()
+                # Remove leading colon or dash
+                if simplified_text.startswith((":", "-", "—")):
+                    simplified_text = simplified_text[1:].strip()
         
         # Remove any leading/trailing quotes
         simplified_text = simplified_text.strip('"\'')
         
-        # If the response is still the same as input or too short, it likely failed
+        # Final validation - if it's still the same as original, try harder
         if simplified_text.strip() == req.question or len(simplified_text.strip()) < 10:
-            print(f"Warning: Ollama response seems unchanged. Raw: {raw_response[:200]}")
-            # Try to extract any text that's different from the original
-            lines = raw_response.split("\n")
-            for line in lines:
-                line = line.strip()
-                if line and line != req.question and len(line) > 10:
-                    # Check if this line is substantially different
-                    if line.lower() != req.question.lower() and req.question.lower() not in line.lower():
-                        simplified_text = line
-                        break
+            print(f"Warning: Ollama response seems unchanged. Raw: {raw_response[:300]}")
+            # Try to extract any sentence that's different from the original
+            sentences = raw_response.replace("\n", " ").split(".")
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if (sentence and 
+                    len(sentence) > 15 and  # Must be substantial
+                    sentence.lower() != req.question.lower() and 
+                    req.question.lower() not in sentence.lower() and
+                    sentence.lower() not in req.question.lower()):
+                    # This looks like a different sentence
+                    simplified_text = sentence
+                    break
             
-            # If still no good result, return a basic simplification attempt
+            # If STILL no good result, create a simple fallback
             if simplified_text.strip() == req.question or len(simplified_text.strip()) < 10:
-                # Last resort: return a message indicating we couldn't simplify
-                simplified_text = f"Let's try this: {req.question}"
+                # Create a basic simplification by replacing common complex words
+                fallback = req.question
+                replacements = {
+                    "select": "choose",
+                    "identify": "find",
+                    "determine": "figure out",
+                    "match": "pick",
+                    "click": "tap",
+                }
+                for old, new_word in replacements.items():
+                    fallback = fallback.replace(old, new_word)
+                simplified_text = fallback if fallback != req.question else f"Can you {req.question.lower()}?"
         
         print(f"Final simplified text: {simplified_text[:100]}...")
         
@@ -201,27 +321,44 @@ async def _rephrase_with_gemini(req) -> Tuple[str, Optional[List[str]]]:
     api_key = os.getenv("LLM_API_KEY")
     api_url = os.getenv("LLM_API_URL")  # e.g. provider endpoint
 
-    # Build a clearer prompt that asks for just the simplified question
-    prompt_parts = [
-        "You are helping a neurodiverse student understand a multiple-choice question.",
-        f"Neurotype: {req.neuroType or 'unknown'}.",
-        f"Difficulty level: {req.difficulty or 'unknown'}.",
-    ]
-    if req.confusionFlag:
-        prompt_parts.append("The student is confused. Please simplify the language significantly.")
+    # Build a much more explicit prompt for neurodiverse learners
+    neurotype_context = {
+        "Dyslexia": "Use simple words, short sentences, and avoid complex spelling. Break down instructions into clear steps.",
+        "ADHD": "Use direct, action-oriented language. Be very clear and concise. Remove unnecessary words.",
+        "ASD": "Use literal language, avoid metaphors or idioms. Be explicit and step-by-step.",
+        "unknown": "Use simple, clear language suitable for a young learner."
+    }
     
-    prompt_parts.append(
-        "IMPORTANT: Rephrase ONLY the question below into simpler, kid-friendly language. "
-        "Use shorter sentences and easier words. Do NOT repeat the original question. "
-        "Just provide the simplified version directly."
-    )
-    prompt_parts.append(f"\nOriginal question: {req.question}")
+    neuro_guidance = neurotype_context.get(req.neuroType or "unknown", neurotype_context["unknown"])
+    
+    prompt_parts = [
+        "You are a teacher helping a neurodiverse child understand a question.",
+        f"The child has: {req.neuroType or 'learning differences'}.",
+        f"Guidance: {neuro_guidance}",
+        "",
+        "CRITICAL INSTRUCTIONS:",
+        "1. You MUST rewrite the question in MUCH simpler language.",
+        "2. Use words a 6-8 year old would understand.",
+        "3. Break long sentences into shorter ones.",
+        "4. Replace complex words with simple ones (e.g., 'select' → 'choose', 'identify' → 'find').",
+        "5. DO NOT copy the original question - you MUST create a new, simpler version.",
+        "6. Keep the meaning and correct answer the same, but make it easier to understand.",
+        "",
+        f"Original question: {req.question}",
+        "",
+        "Your task: Write a SIMPLER version of this question. Make it easier to understand.",
+        "",
+        "Simplified question (write ONLY the simplified version, nothing else):"
+    ]
+    
+    if req.confusionFlag:
+        prompt_parts.insert(3, "⚠️ The student is confused and needs extra help. Simplify even more!")
+    
     if req.options:
-        prompt_parts.append("\nOptions (you can simplify these too if needed):")
+        prompt_parts.append("")
+        prompt_parts.append("Options (you can simplify these too):")
         for i, opt in enumerate(req.options):
             prompt_parts.append(f"{chr(65+i)}. {opt}")
-    
-    prompt_parts.append("\n\nSimplified question:")
 
     prompt = "\n".join(prompt_parts)
 
@@ -291,36 +428,89 @@ async def _rephrase_with_gemini(req) -> Tuple[str, Optional[List[str]]]:
             return req.question, req.options
         
         # Clean up the response - remove any prompt artifacts
-        # Remove the original question if it appears
-        if req.question in simplified_text:
-            # Try to extract just the new simplified version
-            parts = simplified_text.split(req.question)
-            # Take the part that's different
-            for part in parts:
-                part = part.strip()
-                if part and part != req.question and len(part) > 10:
-                    simplified_text = part
+        # Remove common markers first
+        markers = [
+            "Simplified question (write ONLY the simplified version, nothing else):",
+            "Simplified question:",
+            "Here's the simplified version:",
+            "Simplified version:",
+            "Here's a simpler version:",
+            "The simplified question is:",
+            "Simplified:",
+        ]
+        for marker in markers:
+            if marker in simplified_text:
+                parts = simplified_text.split(marker, 1)
+                if len(parts) > 1:
+                    simplified_text = parts[1].strip()
                     break
+        
+        # Remove the original question if it appears anywhere
+        if req.question in simplified_text:
+            # Try to extract text that comes AFTER the original question
+            parts = simplified_text.split(req.question, 1)
+            if len(parts) > 1 and parts[1].strip():
+                simplified_text = parts[1].strip()
+            # Or try to extract text that comes BEFORE the original question
+            elif len(parts) > 0 and parts[0].strip() and parts[0] != req.question:
+                simplified_text = parts[0].strip()
+            # If original question is the whole response, try to find any different text
+            else:
+                # Split by newlines and find the first line that's different
+                lines = simplified_text.split("\n")
+                for line in lines:
+                    line = line.strip()
+                    if line and line != req.question and len(line) > 10:
+                        # Check if this line is substantially different
+                        if (line.lower() != req.question.lower() and 
+                            req.question.lower() not in line.lower() and
+                            line.lower() not in req.question.lower()):
+                            simplified_text = line
+                            break
         
         # Remove common prefixes
-        prefixes = ["Here's", "Here is", "Simplified:", "The simplified question is:"]
+        prefixes = ["Here's", "Here is", "Simplified:", "The simplified question is:", "Answer:"]
         for prefix in prefixes:
-            if simplified_text.startswith(prefix):
+            if simplified_text.lower().startswith(prefix.lower()):
                 simplified_text = simplified_text[len(prefix):].strip()
-                # Remove leading colon if present
-                if simplified_text.startswith(":"):
+                # Remove leading colon or dash if present
+                if simplified_text.startswith((":", "-", "—")):
                     simplified_text = simplified_text[1:].strip()
         
-        # Final check - if it's still the same, try to find any different text
-        if simplified_text.strip() == req.question:
+        # Remove any leading/trailing quotes
+        simplified_text = simplified_text.strip('"\'')
+        
+        # Final check - if it's still the same, try harder to find different text
+        if simplified_text.strip() == req.question or len(simplified_text.strip()) < 10:
             print(f"Warning: Simplified text is same as original. Trying to extract different text...")
-            # Look for any sentence that's different
-            sentences = simplified_text.split(".")
+            # Try to extract any sentence that's different from the original
+            raw_text = simplified_text if simplified_text else candidate["content"]["parts"][0].get("text", "")
+            sentences = raw_text.replace("\n", " ").split(".")
             for sentence in sentences:
                 sentence = sentence.strip()
-                if sentence and sentence != req.question and len(sentence) > 10:
+                if (sentence and 
+                    len(sentence) > 15 and  # Must be substantial
+                    sentence.lower() != req.question.lower() and 
+                    req.question.lower() not in sentence.lower() and
+                    sentence.lower() not in req.question.lower()):
+                    # This looks like a different sentence
                     simplified_text = sentence
                     break
+            
+            # If STILL no good result, create a simple fallback
+            if simplified_text.strip() == req.question or len(simplified_text.strip()) < 10:
+                # Create a basic simplification by replacing common complex words
+                fallback = req.question
+                replacements = {
+                    "select": "choose",
+                    "identify": "find",
+                    "determine": "figure out",
+                    "match": "pick",
+                    "click": "tap",
+                }
+                for old, new_word in replacements.items():
+                    fallback = fallback.replace(old, new_word)
+                simplified_text = fallback if fallback != req.question else f"Can you {req.question.lower()}?"
         
         print(f"Final simplified text: {simplified_text[:150]}...")
             

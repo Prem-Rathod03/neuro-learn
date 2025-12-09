@@ -68,6 +68,18 @@ export const ActivityRenderer: React.FC<ActivityRendererProps> = ({
       );
     }
 
+    // Show description even if there's no emoji or image
+    if (activity.stimulusDescription) {
+      return (
+        <div className="text-center mb-6">
+          <div className="text-6xl mb-2">{activity.stimulusDescription}</div>
+          {activity.stimulusImageAlt && (
+            <p className="text-muted-foreground text-sm">{activity.stimulusImageAlt}</p>
+          )}
+        </div>
+      );
+    }
+
     return null;
   };
 

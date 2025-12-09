@@ -2,20 +2,108 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Navbar } from '@/components/Navbar';
 import { ModuleCard } from '@/components/ModuleCard';
 import { Card } from '@/components/ui/card';
-import { modules, getTotalStars, getEarnedBadgesCount } from '@/data/mockData';
+import { modules as mockModules, getTotalStars, getEarnedBadgesCount } from '@/data/mockData';
 import { Star, Award, TrendingUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { getModuleProgress } from '@/lib/api';
+import type { Module } from '@/data/mockData';
+import { getAllModuleProgress } from '@/utils/progressStorage';
+import { getActivitiesByModule } from '@/data/activityItems';
 
 const Dashboard = () => {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
+  const [modules, setModules] = useState<Module[]>(mockModules);
+  const [modulesLoading, setModulesLoading] = useState(true);
 
-  const totalStars = getTotalStars();
+  // Fetch real progress from backend AND localStorage
+  useEffect(() => {
+    const fetchProgress = async () => {
+      if (!user || !user.email) return;
+      
+      try {
+        // Get total activities count from local data
+        const totalActivities = {
+          M1: getActivitiesByModule('M1').length,
+          M2: getActivitiesByModule('M2').length,
+          M3: getActivitiesByModule('M3').length,
+        };
+        
+        // Get progress from localStorage (most accurate - reflects actual saved progress)
+        console.log('Dashboard: Fetching progress for user:', user.email);
+        console.log('Dashboard: Total activities:', totalActivities);
+        
+        const localStorageProgress = getAllModuleProgress(user.email, totalActivities);
+        console.log('Dashboard: localStorage progress:', localStorageProgress);
+        
+        // Try to get backend progress (for fallback or additional data)
+        let backendProgress = null;
+        try {
+          const storedUser = localStorage.getItem('neuropath_user');
+          let userId: string | undefined;
+          if (storedUser) {
+            try {
+              const userData = JSON.parse(storedUser);
+              userId = userData._id || userData.id;
+            } catch (e) {
+              // Ignore parse errors
+            }
+          }
+          backendProgress = await getModuleProgress(userId);
+        } catch (error) {
+          console.log('Backend progress unavailable, using localStorage only');
+        }
+        
+        // Map backend module IDs (M1, M2, M3) to frontend module IDs (module-1, module-2, module-3)
+        const updatedModules = mockModules.map((module) => {
+          const moduleNum = module.id.replace('module-', '');
+          const backendModuleId = `M${moduleNum}` as 'M1' | 'M2' | 'M3';
+          
+          // Use localStorage progress (most accurate)
+          const localProgress = localStorageProgress[backendModuleId];
+          
+          // Always use frontend total activities (correct count)
+          const correctTotal = totalActivities[backendModuleId];
+          
+          // Use localStorage completed count, or 0 if no progress saved
+          const completedCount = localProgress?.completed || 0;
+          
+          // Calculate progress percentage
+          const progressPercent = correctTotal > 0 
+            ? Math.min((completedCount / correctTotal) * 100, 100)
+            : 0;
+          
+          console.log(`Module ${backendModuleId}: ${completedCount}/${correctTotal} (${progressPercent.toFixed(1)}%)`);
+          
+          return {
+            ...module,
+            progress: Math.round(progressPercent * 10) / 10, // Round to 1 decimal
+            activitiesCompleted: completedCount,
+            totalActivities: correctTotal, // Always use frontend total
+          };
+        });
+        
+        setModules(updatedModules);
+      } catch (error) {
+        console.error('Failed to fetch module progress:', error);
+        // Keep default modules (with 0 progress)
+      } finally {
+        setModulesLoading(false);
+      }
+    };
+
+    if (!loading && user) {
+      fetchProgress();
+    }
+  }, [user, loading]);
+
+  const totalStars = modules.reduce((acc, m) => acc + m.activitiesCompleted * 3, 0);
   const earnedBadges = getEarnedBadgesCount();
 
-  // Show loading state while user is being loaded
-  if (loading) {
+  // Show loading state while user is being loaded or modules are loading
+  if (loading || modulesLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center space-y-4">

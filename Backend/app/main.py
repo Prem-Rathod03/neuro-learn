@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routes import activity, auth, progress, rephrase, attention
+from .routes import activity, auth, progress, rephrase, attention, analytics, admin
 from .db.mongo import close_client
 
 # Load environment variables from .env file
@@ -34,6 +34,8 @@ app.include_router(activity.router, prefix="/api/activity", tags=["activity"])
 app.include_router(progress.router, prefix="/api", tags=["progress"])
 app.include_router(rephrase.router, prefix="/api", tags=["rephrase"])
 app.include_router(attention.router, prefix="/api", tags=["attention"])
+app.include_router(analytics.router, prefix="/api", tags=["analytics"])
+app.include_router(admin.router, prefix="/api", tags=["admin"])
 
 
 @app.get("/")

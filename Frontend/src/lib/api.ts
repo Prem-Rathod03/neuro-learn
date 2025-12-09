@@ -108,7 +108,7 @@ export interface Activity {
 }
 
 // New ActivityItem-based endpoint with timeout
-export async function getNextActivity(): Promise<ActivityItem> {
+export async function getNextActivity(moduleId?: string): Promise<ActivityItem> {
   // Add timeout to prevent hanging - use AbortController
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
@@ -116,7 +116,13 @@ export async function getNextActivity(): Promise<ActivityItem> {
   }, 1000); // 1 second timeout - fail fast
   
   try {
-    const res = await fetch(`${BASE_URL}/api/activity/next`, {
+    // Build URL with optional moduleId query parameter
+    const url = new URL(`${BASE_URL}/api/activity/next`);
+    if (moduleId) {
+      url.searchParams.append('moduleId', moduleId);
+    }
+    
+    const res = await fetch(url.toString(), {
       signal: controller.signal,
       method: 'GET',
       headers: {
@@ -171,9 +177,43 @@ export interface ProgressResponse {
   attempts: number;
 }
 
+export interface ModuleProgress {
+  activitiesCompleted: number;
+  totalActivities: number;
+  progress: number;
+}
+
+export interface ModuleProgressResponse {
+  M1: ModuleProgress;
+  M2: ModuleProgress;
+  M3: ModuleProgress;
+}
+
 export async function getProgress(): Promise<ProgressResponse> {
   const res = await fetch(`${BASE_URL}/api/progress`);
   return res.json();
+}
+
+export async function getModuleProgress(userId?: string): Promise<ModuleProgressResponse> {
+  try {
+    const url = userId 
+      ? `${BASE_URL}/api/progress/modules?userId=${userId}`
+      : `${BASE_URL}/api/progress/modules`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch module progress: ${res.statusText}`);
+    }
+    return res.json();
+  } catch (error) {
+    // Return default progress (0) if API fails
+    console.error('Failed to fetch module progress:', error);
+    // These will be updated when the API succeeds
+    return {
+      M1: { activitiesCompleted: 0, totalActivities: 10, progress: 0 },
+      M2: { activitiesCompleted: 0, totalActivities: 10, progress: 0 },
+      M3: { activitiesCompleted: 0, totalActivities: 10, progress: 0 },
+    };
+  }
 }
 
 // ---------- REPHRASE ----------

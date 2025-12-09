@@ -37,8 +37,8 @@ export const modules: Module[] = [
     description: 'Learn to follow and understand different types of instructions',
     icon: '📋',
     color: 'primary',
-    progress: 40,
-    activitiesCompleted: 4,
+    progress: 0, // Start at 0 - will be updated from backend
+    activitiesCompleted: 0, // Start at 0 - will be updated from backend
     totalActivities: 10,
   },
   {
@@ -47,8 +47,8 @@ export const modules: Module[] = [
     description: 'Practice counting, patterns, and simple problem solving',
     icon: '🔢',
     color: 'success',
-    progress: 20,
-    activitiesCompleted: 2,
+    progress: 0, // Start at 0 - will be updated from backend
+    activitiesCompleted: 0, // Start at 0 - will be updated from backend
     totalActivities: 10,
   },
   {
@@ -57,8 +57,8 @@ export const modules: Module[] = [
     description: 'Build concentration and develop helpful daily routines',
     icon: '🎯',
     color: 'accent',
-    progress: 60,
-    activitiesCompleted: 6,
+    progress: 0, // Start at 0 - will be updated from backend
+    activitiesCompleted: 0, // Start at 0 - will be updated from backend
     totalActivities: 10,
   },
 ];

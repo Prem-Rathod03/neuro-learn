@@ -6,15 +6,19 @@
 
 export type ActivityType =
   | "image_to_word"          // Lesson 1.1: Match picture to word
+  | "instruction_to_image"   // Lesson 1.2: Match instruction to image
   | "one_step_instruction"   // Lesson 1.2: Single instruction
   | "two_step_sequence"      // Lesson 1.3: Two-step sequence
   | "counting"               // Lesson 2.1: Count objects
   | "visual_addition"        // Lesson 2.2: Visual math
   | "pattern"                // Lesson 2.3: Patterns
+  | "pattern_completion"     // Lesson 2.3: Complete patterns
   | "comparison"             // Lesson 2.3: Comparisons
+  | "comparison_choice"      // Lesson 2.3: Comparison choices
   | "logic_choice"           // Lesson 2.3: Logic choices
   | "sequence_ordering"      // Lesson 3.1: Drag & drop sequences
-  | "focus_filter";          // Lesson 3.2: Focus tasks (click targets)
+  | "focus_filter"           // Lesson 3.2: Focus tasks (click targets)
+  | "focus_task";            // Lesson 3.2: Focus tasks
 
 export type ModuleId = "M1" | "M2" | "M3";
 export type LessonId = "1.1" | "1.2" | "1.3" | "2.1" | "2.2" | "2.3" | "3.1" | "3.2";

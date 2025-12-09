@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { Navbar } from '@/components/Navbar';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -14,19 +14,18 @@ import { ADHDProgressBar } from '@/components/ProgressBar';
 import { ActivityRenderer } from '@/components/ActivityRenderer';
 import { ActivityItem } from '@/types/activity';
 import { useTextToSpeech } from '@/hooks/useTextToSpeech';
-import { getActivityById, getActivitiesByLesson, getActivitiesByModule, getNextActivityInSequence } from '@/data/activityItems';
+import { getActivityById, getActivitiesByLesson } from '@/data/activityItems';
 
 const LearningActivity = () => {
-  const { moduleId } = useParams<{ moduleId: string }>();
-  const navigate = useNavigate();
+  const { moduleId } = useParams<{ moduleId: string }>(); // Extract moduleId from URL
   const { settings } = useSettings();
   const { user } = useAuth();
   const { toast } = useToast();
+
   const { speak } = useTextToSpeech();
-  
   const [distractionFree, setDistractionFree] = useState(settings.distractionFreeDefault);
   const [activity, setActivity] = useState<ActivityItem | null>(null);
-  const [selectedAnswers, setSelectedAnswers] = useState<string[]>([]);
+  const [selectedAnswers, setSelectedAnswers] = useState<string[]>([]); // Support multiple for focus_filter
   const [startTime, setStartTime] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -34,84 +33,24 @@ const LearningActivity = () => {
   const [simplified, setSimplified] = useState<string>('');
   const [rephrasing, setRephrasing] = useState(false);
   const [feedback, setFeedback] = useState<string>('');
+  const [correctCount, setCorrectCount] = useState(0);
   
   // Track lesson progress
   const [currentLessonProgress, setCurrentLessonProgress] = useState({ completed: 0, total: 0 });
   const [completedActivitiesInLesson, setCompletedActivitiesInLesson] = useState<Set<string>>(new Set());
 
-  // Load saved progress from localStorage on mount
   useEffect(() => {
-    if (user?.email && moduleId) {
-      // Normalize moduleId: "module-2" -> "M2"
-      const normalizedModuleId = moduleId.startsWith('module-') 
-        ? `M${moduleId.replace('module-', '')}` 
-        : moduleId.startsWith('M') 
-          ? moduleId 
-          : `M${moduleId}`;
-      
-      const progressKey = `progress_${user.email}_${normalizedModuleId}`;
-      console.log(`Loading progress from key: ${progressKey}`);
-      const savedProgress = localStorage.getItem(progressKey);
-      if (savedProgress) {
-        try {
-          const { lastActivityId, completedIds } = JSON.parse(savedProgress);
-          console.log(`✅ Loaded saved progress for ${normalizedModuleId}:`, lastActivityId, `(${completedIds?.length || 0} completed)`);
-          
-          // Restore completed activities
-          if (completedIds && Array.isArray(completedIds)) {
-            setCompletedActivitiesInLesson(new Set(completedIds));
-          }
-          
-          // Load the next activity after the last completed one
-          if (lastActivityId) {
-            const nextActivity = getNextActivityInSequence(normalizedModuleId, lastActivityId);
-            if (nextActivity) {
-              setActivity(nextActivity);
-              setStartTime(Date.now());
-              setLoading(false);
-              toast({
-                title: 'Welcome back!',
-                description: `Continuing from where you left off in Lesson ${nextActivity.lessonId}`,
-                variant: 'default',
-              });
-              return;
-            }
-          }
-        } catch (e) {
-          console.error('Failed to load saved progress:', e);
-        }
-      } else {
-        console.log(`No saved progress found for key: ${progressKey}`);
-      }
-    }
+    // Load activity on mount
     loadNext();
-  }, [moduleId]);
-  
-  // Update lesson progress whenever activity changes
-  useEffect(() => {
-    if (activity) {
-      updateLessonProgress(activity);
-    }
-  }, [activity, completedActivitiesInLesson]);
-  
-  // Update lesson progress based on current activity
-  const updateLessonProgress = (currentActivity: ActivityItem) => {
-    // Get all activities for this lesson
-    const lessonActivities = getActivitiesByLesson(currentActivity.moduleId, currentActivity.lessonId);
-    const totalInLesson = lessonActivities.length;
-    
-    // Count completed activities in this lesson (from state)
-    const completed = completedActivitiesInLesson.size;
-    
-    console.log(`Lesson ${currentActivity.lessonId} progress: ${completed}/${totalInLesson}`);
-    setCurrentLessonProgress({ completed, total: totalInLesson });
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run once on mount
 
-  // Helper to get fallback activity
+  // Helper to get fallback activity based on moduleId
   const getFallbackActivity = (targetModuleId?: string): ActivityItem | null => {
     try {
       console.log('Getting fallback activity for module:', targetModuleId);
       
+      // Normalize moduleId: convert "module-1" to "M1", etc.
       let normalizedModuleId = targetModuleId;
       if (targetModuleId) {
         if (targetModuleId.startsWith('module-')) {
@@ -122,14 +61,16 @@ const LearningActivity = () => {
         }
       }
       
+      // Try to get first activity from the specified module
       if (normalizedModuleId) {
         const moduleNum = normalizedModuleId.replace('M', '');
-        const firstLesson = `${moduleNum}.1`;
+        const firstLesson = `${moduleNum}.1`; // First lesson of the module
         const activities = getActivitiesByLesson(normalizedModuleId, firstLesson);
         console.log(`${normalizedModuleId} L${firstLesson} activities:`, activities.length);
         if (activities.length > 0) return activities[0];
       }
       
+      // Fallback: try M1, then M2, then M3
       const fallbackModules = ['M1', 'M2', 'M3'];
       for (const modId of fallbackModules) {
         const moduleNum = modId.replace('M', '');
@@ -141,6 +82,7 @@ const LearningActivity = () => {
         }
       }
       
+      // Last resort: try to get any activity by ID
       const byId = getActivityById('M1_L1_Q1');
       if (byId) return byId;
       
@@ -156,6 +98,7 @@ const LearningActivity = () => {
     setLoading(true);
     setError(null);
     
+    // Helper function to set activity and reset state
     const setActivityAndReset = (activity: ActivityItem) => {
       console.log('Setting activity:', activity.id);
       setActivity(activity);
@@ -164,49 +107,23 @@ const LearningActivity = () => {
       setSimplified('');
       setFeedback('');
       setLoading(false);
+      // Don't reset progress counters - they persist across activities
     };
     
-    // USE LOCAL DATA - backend has incomplete dataset
-    // Get next activity in sequence based on current activity
-    const normalizedModuleId = moduleId 
-      ? (moduleId.startsWith('module-') 
-          ? `M${moduleId.replace('module-', '')}` 
-          : moduleId.startsWith('M') 
-            ? moduleId 
-            : `M${moduleId}`)
-      : undefined;
-    
-    if (!normalizedModuleId) {
-      setError('Invalid module ID');
+            // First, get fallback ready (pass moduleId if available)
+            const fallbackActivity = getFallbackActivity(moduleId);
+            if (!fallbackActivity) {
+      console.error('No fallback activities found!');
+      setError('No activities available. Please check your data files.');
       setLoading(false);
       return;
     }
     
-    const nextActivity = getNextActivityInSequence(
-      normalizedModuleId, 
-      activity?.id // Pass current activity ID to get next one
-    );
-    
-    if (!nextActivity) {
-      console.log('No more activities in this module');
-      toast({
-        title: 'Module Complete! 🎉',
-        description: 'You\'ve completed all activities in this module!',
-        variant: 'default',
-      });
-      setLoading(false);
-      // Could navigate back to dashboard here
-      return;
-    }
-    
-    console.log('Loading next activity:', nextActivity.id, `(Lesson ${nextActivity.lessonId})`);
-    setActivityAndReset(nextActivity);
-    return;
-    
-    /* Backend API disabled until data is synced
+    // Try to get activity from backend API with timeout (1 second - fail fast)
     let apiWorked = false;
     try {
       console.log('Attempting to fetch activity from API...', { moduleId });
+      // Convert module-1, module-2, module-3 to M1, M2, M3
       const normalizedModuleId = moduleId 
         ? (moduleId.startsWith('module-') 
             ? `M${moduleId.replace('module-', '')}` 
@@ -215,16 +132,49 @@ const LearningActivity = () => {
               : `M${moduleId}`)
         : undefined;
       
-      const next = await getNextActivity(normalizedModuleId);
+      const next = await Promise.race([
+        getNextActivity(normalizedModuleId),
+        new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('Request timeout')), 1000)
+        )
+      ]);
       console.log('API response received:', next);
       apiWorked = true;
       
+      // Process the response
       if (next && 'id' in next && 'instruction' in next && 'options' in next && Array.isArray(next.options)) {
+        // New ActivityItem format
         if (next.options.length === 0) {
           throw new Error('Activity has no options');
         }
         setActivityAndReset(next as ActivityItem);
-        return;
+        return; // Success!
+      } else if (next && 'activityId' in next && 'question' in next) {
+        // Legacy format - convert to ActivityItem
+        const converted: ActivityItem = {
+          id: next.activityId || 'legacy-1',
+          moduleId: 'M1',
+          lessonId: '1.1',
+          type: 'image_to_word',
+          instruction: next.question || 'Answer the question',
+          instructionTts: next.question,
+          difficulty: (next.difficulty as 'easy' | 'medium' | 'hard') || 'easy',
+          options: (next.options || []).map((opt: string, idx: number) => ({
+            id: String.fromCharCode(65 + idx), // A, B, C, D
+            label: opt,
+            isCorrect: false,
+            ttsText: opt,
+          })),
+          accessibility: {
+            recommendedFor: [],
+            enableTtsOnHover: false,
+            showProgressBar: false,
+            avoidMetaphors: true,
+            consistentFeedback: true,
+          },
+        };
+        setActivityAndReset(converted);
+        return; // Success!
       } else {
         throw new Error('Invalid activity data received from server');
       }
@@ -233,6 +183,7 @@ const LearningActivity = () => {
       apiWorked = false;
     }
     
+    // If API didn't work, use fallback immediately
     if (!apiWorked) {
       console.log('Falling back to mock data...');
       if (fallbackActivity) {
@@ -254,7 +205,6 @@ const LearningActivity = () => {
         setLoading(false);
       }
     }
-    */
   };
 
   const handleSubmit = async () => {
@@ -270,82 +220,56 @@ const LearningActivity = () => {
     setSubmitting(true);
     const timeTaken = (Date.now() - startTime) / 1000;
 
+    // Determine if answer is correct based on ActivityItem schema
     let isCorrect = false;
     if (activity.type === 'focus_filter') {
+      // For focus tasks, count correct selections
       const correctSelections = activity.options.filter(
         opt => opt.isCorrect && selectedAnswers.includes(opt.id)
       ).length;
       isCorrect = correctSelections > 0;
     } else {
+      // For single-answer activities, check if selected answer is correct
       const selectedOption = activity.options.find(opt => selectedAnswers.includes(opt.id));
       isCorrect = selectedOption?.isCorrect || false;
     }
 
     await submitActivity({
       activityId: activity.id,
-      answer: selectedAnswers.join(','),
+      answer: selectedAnswers.join(','), // Join multiple answers if needed
       isCorrect,
       timeTaken,
       difficultyRating: 3,
       focusRating: 3,
       feedbackText: feedback,
-      attentionScore: 0.7,
-      lessonId: activity.lessonId,
+      attentionScore: 0.7, // placeholder; replace with real attention model output
     });
 
+    // Update progress for all users - track questions answered
+    // Update total answered count (regardless of correctness)
+    setTotalAnswered((prev) => {
+      const newCount = prev + 1;
+      console.log(`Progress updated: ${newCount} / ${TOTAL_TARGET} questions answered`);
+      return newCount;
+    });
+    
+    // Update correct count only if answer is correct
     if (isCorrect) {
-      // Mark this activity as completed in current lesson
-      const newCompleted = new Set([...completedActivitiesInLesson, activity.id]);
-      setCompletedActivitiesInLesson(newCompleted);
-      
-      // Save progress to localStorage
-      if (user?.email && moduleId) {
-        // Normalize moduleId: "module-2" -> "M2"
-        const normalizedModuleId = moduleId.startsWith('module-') 
-          ? `M${moduleId.replace('module-', '')}` 
-          : moduleId.startsWith('M') 
-            ? moduleId 
-            : `M${moduleId}`;
-        
-        const progressKey = `progress_${user.email}_${normalizedModuleId}`;
-        const progressData = {
-          lastActivityId: activity.id,
-          completedIds: Array.from(newCompleted),
-          lastUpdated: new Date().toISOString(),
-        };
-        localStorage.setItem(progressKey, JSON.stringify(progressData));
-        console.log(`✅ Saved progress for ${normalizedModuleId}:`, activity.id, `(${newCompleted.size} completed)`);
-      }
-      
-      // Get lesson info
-      const lessonActivities = getActivitiesByLesson(activity.moduleId, activity.lessonId);
-      const completedCount = newCompleted.size;
-      
-      // Check if lesson is complete
-      if (completedCount >= lessonActivities.length) {
-        toast({
-          title: 'Lesson Complete! 🎉',
-          description: `You've completed all ${lessonActivities.length} questions in Lesson ${activity.lessonId}!`,
-          variant: 'default',
-        });
-        
-        // Clear completed activities for next lesson
-        setCompletedActivitiesInLesson(new Set());
-      } else {
-        toast({
-          title: 'Correct! 🎉',
-          description: `${completedCount}/${lessonActivities.length} questions completed in Lesson ${activity.lessonId}`,
-          variant: 'default',
-        });
-      }
-      
+      setCorrectCount((prev) => Math.min(prev + 1, TOTAL_TARGET));
+    }
+
+    // Show feedback toast
+    toast({
+      title: isCorrect ? 'Correct! 🎉' : 'Try again!',
+      description: isCorrect ? 'Loading the next activity...' : 'Please try again with a different answer.',
+      variant: isCorrect ? 'default' : 'destructive',
+    });
+
+    // Only move to next question if answer is correct
+    if (isCorrect) {
       await loadNext();
     } else {
-      toast({
-        title: 'Try again!',
-        description: 'Please try again with a different answer.',
-        variant: 'destructive',
-      });
+      // Reset selected answers so user can try again
       setSelectedAnswers([]);
     }
     setSubmitting(false);
@@ -365,12 +289,14 @@ const LearningActivity = () => {
         question: activity.instruction,
       };
       
+      // Include options as strings
       if (activity.options && activity.options.length > 0) {
         payload.options = activity.options.map(opt => opt.label);
       }
       if (activity.difficulty) {
         payload.difficulty = String(activity.difficulty);
       }
+      // Use neuroFlags if available, otherwise fallback to neurodiversityTags
       const neuroFlags = user?.neuroFlags || user?.neurodiversityTags || [];
       if (neuroFlags.length > 0) {
         payload.neuroType = String(neuroFlags[0]);
@@ -390,6 +316,7 @@ const LearningActivity = () => {
       });
     } catch (err: any) {
       const errorMsg = err?.message || 'Please try again';
+      // Check if it's a quota error
       if (errorMsg.includes('quota') || errorMsg.includes('429') || errorMsg.includes('rate limit')) {
         toast({
           title: 'API Quota Exceeded',
@@ -431,7 +358,7 @@ const LearningActivity = () => {
               <Button onClick={loadNext} variant="default">
                 Try Again
               </Button>
-              <Button onClick={() => navigate('/dashboard')} variant="outline">
+              <Button onClick={() => window.location.href = '/dashboard'} variant="outline">
                 Back to Dashboard
               </Button>
             </div>
@@ -441,16 +368,21 @@ const LearningActivity = () => {
     );
   }
 
-  const showProgressBar = true;
+  // Check neuroFlags for feature toggles
+  const hasADHD = user?.neuroFlags?.includes('ADHD') || user?.neurodiversityTags?.includes('ADHD');
+  // Show progress bar for all users (not just ADHD) - helps track progress
+  const showProgressBar = true; // Always show progress bar to track questions answered
 
   const handleSelectAnswer = (optionId: string) => {
     if (activity.type === 'focus_filter') {
+      // Toggle selection for focus tasks
       setSelectedAnswers(prev => 
         prev.includes(optionId) 
           ? prev.filter(id => id !== optionId)
           : [...prev, optionId]
       );
     } else {
+      // Single selection for other activities
       setSelectedAnswers([optionId]);
     }
   };
@@ -469,6 +401,7 @@ const LearningActivity = () => {
 
       <main className="container mx-auto px-4 py-8">
         <div className="max-w-4xl mx-auto space-y-6">
+          {/* Header */}
           {!distractionFree && (
             <div className="flex items-center justify-between">
               <div>
@@ -485,23 +418,21 @@ const LearningActivity = () => {
             </div>
           )}
 
-          {/* Progress Bar - Shows current lesson progress */}
-          {showProgressBar && currentLessonProgress.total > 0 && (
-            <Card className="p-4">
+          {/* Progress Bar - shows questions answered */}
+          {showProgressBar && (
+            <Card className="p-4 bg-muted/30">
               <ADHDProgressBar
-                current={currentLessonProgress.completed}
-                total={currentLessonProgress.total}
-                label={`Lesson ${activity?.lessonId} Progress: ${currentLessonProgress.completed} / ${currentLessonProgress.total}`}
+                current={totalAnswered}
+                total={TOTAL_TARGET}
+                label={`Questions Answered: ${totalAnswered} / ${TOTAL_TARGET}`}
               />
-              <p className="text-xs text-muted-foreground mt-2 text-center">
-                {currentLessonProgress.completed >= currentLessonProgress.total 
-                  ? '✅ Lesson complete! Moving to next lesson...'
-                  : `${currentLessonProgress.total - currentLessonProgress.completed} questions remaining in this lesson`
-                }
+              <p className="text-xs text-muted-foreground mt-2">
+                Progress updates every time you submit an answer (correct or incorrect)
               </p>
             </Card>
           )}
 
+          {/* Distraction-Free Mode Toggle */}
           {distractionFree && (
             <div className="flex justify-end">
               <Button variant="ghost" size="icon" onClick={() => setDistractionFree(false)}>
@@ -510,8 +441,10 @@ const LearningActivity = () => {
             </div>
           )}
 
+          {/* Activity Card */}
           <Card className="p-8 md:p-12 shadow-elevated">
             <div className="space-y-8">
+              {/* Instruction with TTS button */}
               <div className="text-center space-y-4">
                 <Button variant="outline" size="lg" onClick={handleRepeatInstruction} className="gap-2">
                   <Volume2 className="w-5 h-5" />
@@ -519,6 +452,7 @@ const LearningActivity = () => {
                 </Button>
               </div>
 
+              {/* Activity Renderer - handles all activity types */}
               <ActivityRenderer
                 activity={activity}
                 selectedAnswers={selectedAnswers}
@@ -526,6 +460,7 @@ const LearningActivity = () => {
                 onSelectMultiple={handleSelectMultiple}
               />
 
+              {/* Feedback and Rephrase */}
               <div className="space-y-3">
                 <div className="flex flex-wrap gap-3">
                   <Button variant="outline" size="sm" onClick={handleRephrase} disabled={rephrasing}>
@@ -550,6 +485,7 @@ const LearningActivity = () => {
             </div>
           </Card>
 
+          {/* Navigation */}
           <div className="flex items-center justify-end">
             <Button size="lg" onClick={handleSubmit} className="gap-2" disabled={submitting}>
               Submit & Next
@@ -563,4 +499,3 @@ const LearningActivity = () => {
 };
 
 export default LearningActivity;
-

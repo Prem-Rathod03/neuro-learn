@@ -8,7 +8,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
-import { Home, TrendingUp, Award, Settings, LogOut, User, Menu } from 'lucide-react';
+import { Home, TrendingUp, Award, Settings, LogOut, User, Menu, Shield } from 'lucide-react';
 import { NeurodiversityBadge } from './NeurodiversityBadge';
 import { Sheet, SheetContent, SheetTrigger } from './ui/sheet';
 import { useState } from 'react';
@@ -28,6 +28,7 @@ export const Navbar = () => {
     { to: '/progress', label: 'Progress', icon: TrendingUp },
     { to: '/rewards', label: 'Rewards', icon: Award },
     { to: '/settings', label: 'Settings', icon: Settings },
+    { to: '/admin', label: 'Admin', icon: Shield },
   ];
 
   const NavLinks = ({ mobile = false, onClickLink }: { mobile?: boolean; onClickLink?: () => void }) => (

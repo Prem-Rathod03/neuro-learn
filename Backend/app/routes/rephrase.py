@@ -1,8 +1,11 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional, List
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from ..services import nlp_engine
+from ..services.model_logger import log_rephrase_request
+from ..db.mongo import get_db
 
 router = APIRouter()
 
@@ -21,7 +24,7 @@ class RephraseResponse(BaseModel):
 
 
 @router.post("/rephrase", response_model=RephraseResponse)
-async def rephrase(req: RephraseRequest):
+async def rephrase(req: RephraseRequest, db: AsyncIOMotorDatabase = Depends(get_db)):
     try:
         # Validate that question is provided
         if not req.question or not req.question.strip():
@@ -30,6 +33,16 @@ async def rephrase(req: RephraseRequest):
         print(f"Rephrase request: question={req.question[:50]}..., options={req.options}, difficulty={req.difficulty}")
         simplified_q, simplified_opts = await nlp_engine.rephrase_text(req)
         print(f"Rephrase result: {simplified_q[:50]}...")
+        
+        # Log rephrase request for tracking
+        await log_rephrase_request(
+            db,
+            None,  # userId - could be extracted from auth token in future
+            req.question,
+            simplified_q,
+            req.neuroType
+        )
+        
         return RephraseResponse(
             simplifiedQuestion=simplified_q,
             simplifiedOptions=simplified_opts,

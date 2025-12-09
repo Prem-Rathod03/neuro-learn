@@ -14,7 +14,7 @@ import { ADHDProgressBar } from '@/components/ProgressBar';
 import { ActivityRenderer } from '@/components/ActivityRenderer';
 import { ActivityItem } from '@/types/activity';
 import { useTextToSpeech } from '@/hooks/useTextToSpeech';
-import { getActivityById, getActivitiesByLesson, getActivitiesByModule, getNextActivityInSequence } from '@/data/activityItems';
+import { getActivityById, getActivitiesByLesson } from '@/data/activityItems';
 
 const LearningActivity = () => {
   const { moduleId } = useParams<{ moduleId: string }>();
@@ -39,51 +39,7 @@ const LearningActivity = () => {
   const [currentLessonProgress, setCurrentLessonProgress] = useState({ completed: 0, total: 0 });
   const [completedActivitiesInLesson, setCompletedActivitiesInLesson] = useState<Set<string>>(new Set());
 
-  // Load saved progress from localStorage on mount
   useEffect(() => {
-    if (user?.email && moduleId) {
-      // Normalize moduleId: "module-2" -> "M2"
-      const normalizedModuleId = moduleId.startsWith('module-') 
-        ? `M${moduleId.replace('module-', '')}` 
-        : moduleId.startsWith('M') 
-          ? moduleId 
-          : `M${moduleId}`;
-      
-      const progressKey = `progress_${user.email}_${normalizedModuleId}`;
-      console.log(`Loading progress from key: ${progressKey}`);
-      const savedProgress = localStorage.getItem(progressKey);
-      if (savedProgress) {
-        try {
-          const { lastActivityId, completedIds } = JSON.parse(savedProgress);
-          console.log(`✅ Loaded saved progress for ${normalizedModuleId}:`, lastActivityId, `(${completedIds?.length || 0} completed)`);
-          
-          // Restore completed activities
-          if (completedIds && Array.isArray(completedIds)) {
-            setCompletedActivitiesInLesson(new Set(completedIds));
-          }
-          
-          // Load the next activity after the last completed one
-          if (lastActivityId) {
-            const nextActivity = getNextActivityInSequence(normalizedModuleId, lastActivityId);
-            if (nextActivity) {
-              setActivity(nextActivity);
-              setStartTime(Date.now());
-              setLoading(false);
-              toast({
-                title: 'Welcome back!',
-                description: `Continuing from where you left off in Lesson ${nextActivity.lessonId}`,
-                variant: 'default',
-              });
-              return;
-            }
-          }
-        } catch (e) {
-          console.error('Failed to load saved progress:', e);
-        }
-      } else {
-        console.log(`No saved progress found for key: ${progressKey}`);
-      }
-    }
     loadNext();
   }, [moduleId]);
   
@@ -166,44 +122,14 @@ const LearningActivity = () => {
       setLoading(false);
     };
     
-    // USE LOCAL DATA - backend has incomplete dataset
-    // Get next activity in sequence based on current activity
-    const normalizedModuleId = moduleId 
-      ? (moduleId.startsWith('module-') 
-          ? `M${moduleId.replace('module-', '')}` 
-          : moduleId.startsWith('M') 
-            ? moduleId 
-            : `M${moduleId}`)
-      : undefined;
-    
-    if (!normalizedModuleId) {
-      setError('Invalid module ID');
+    const fallbackActivity = getFallbackActivity(moduleId);
+    if (!fallbackActivity) {
+      console.error('No fallback activities found!');
+      setError('No activities available. Please check your data files.');
       setLoading(false);
       return;
     }
     
-    const nextActivity = getNextActivityInSequence(
-      normalizedModuleId, 
-      activity?.id // Pass current activity ID to get next one
-    );
-    
-    if (!nextActivity) {
-      console.log('No more activities in this module');
-      toast({
-        title: 'Module Complete! 🎉',
-        description: 'You\'ve completed all activities in this module!',
-        variant: 'default',
-      });
-      setLoading(false);
-      // Could navigate back to dashboard here
-      return;
-    }
-    
-    console.log('Loading next activity:', nextActivity.id, `(Lesson ${nextActivity.lessonId})`);
-    setActivityAndReset(nextActivity);
-    return;
-    
-    /* Backend API disabled until data is synced
     let apiWorked = false;
     try {
       console.log('Attempting to fetch activity from API...', { moduleId });
@@ -254,7 +180,6 @@ const LearningActivity = () => {
         setLoading(false);
       }
     }
-    */
   };
 
   const handleSubmit = async () => {
@@ -297,25 +222,6 @@ const LearningActivity = () => {
       // Mark this activity as completed in current lesson
       const newCompleted = new Set([...completedActivitiesInLesson, activity.id]);
       setCompletedActivitiesInLesson(newCompleted);
-      
-      // Save progress to localStorage
-      if (user?.email && moduleId) {
-        // Normalize moduleId: "module-2" -> "M2"
-        const normalizedModuleId = moduleId.startsWith('module-') 
-          ? `M${moduleId.replace('module-', '')}` 
-          : moduleId.startsWith('M') 
-            ? moduleId 
-            : `M${moduleId}`;
-        
-        const progressKey = `progress_${user.email}_${normalizedModuleId}`;
-        const progressData = {
-          lastActivityId: activity.id,
-          completedIds: Array.from(newCompleted),
-          lastUpdated: new Date().toISOString(),
-        };
-        localStorage.setItem(progressKey, JSON.stringify(progressData));
-        console.log(`✅ Saved progress for ${normalizedModuleId}:`, activity.id, `(${newCompleted.size} completed)`);
-      }
       
       // Get lesson info
       const lessonActivities = getActivitiesByLesson(activity.moduleId, activity.lessonId);

@@ -15,6 +15,7 @@ import Progress from "./pages/Progress";
 import Rewards from "./pages/Rewards";
 import Settings from "./pages/Settings";
 import ParentDashboard from "./pages/ParentDashboard";
+import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -70,6 +71,14 @@ const App = () => (
                 element={
                   <ProtectedRoute>
                     <Settings />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin"
+                element={
+                  <ProtectedRoute>
+                    <Admin />
                   </ProtectedRoute>
                 }
               />

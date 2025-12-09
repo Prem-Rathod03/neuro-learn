@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from ..db.mongo import get_db
 from ..services import ml_engine, nlp_engine, feature_builder
+from ..services.model_logger import log_ml_prediction, log_nlp_analysis
 
 # Try to import new ActivityItem models, fallback to old format if not available
 try:
@@ -119,11 +120,16 @@ class SubmitRequest(BaseModel):
 @router.get("/next")
 async def get_next_activity(
     userId: Optional[str] = None,
+    moduleId: Optional[str] = None,  # Filter by module: M1, M2, or M3 (or module-1, module-2, module-3)
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
     Get next activity using ML recommendation.
     Returns ActivityItem following the new schema, or legacy format as fallback.
+    
+    Args:
+        userId: Optional user ID for personalization
+        moduleId: Optional module filter (M1, M2, M3). If provided, returns activities only from that module.
     """
     interactions_col = db["interactions"]
 
@@ -136,40 +142,119 @@ async def get_next_activity(
 
     # 3) Ask ML engine what to do next
     reco = ml_engine.recommend_next(features)  # uses RandomForest/MLP later
+    
+    # Log ML prediction for performance tracking
+    await log_ml_prediction(
+        db,
+        userId,
+        features,
+        {"topic": reco.topic, "difficulty": reco.difficulty, "modality": reco.modality}
+    )
 
     # 4) Try to use new ActivityItem schema if available
     if USE_NEW_SCHEMA:
         try:
-            # Map old topic/modality to new activity types
-            activity_type_map = {
-                ("reading", "text"): "image_to_word",
-                ("reading", "audio"): "one_step_instruction",
-                ("math", "text"): "counting",
-                ("math", "visual"): "visual_addition",
-            }
+            from ..data.activity_items import (
+                get_activities_by_module,
+                get_next_activity_in_sequence,
+                get_activities_by_lesson
+            )
             
-            activity_type = activity_type_map.get((reco.topic, reco.modality), "image_to_word")
+            # Normalize moduleId: convert "module-1" to "M1", "module-2" to "M2", etc.
+            target_module = None
+            if moduleId:
+                if moduleId.startswith("module-"):
+                    # Convert "module-1" -> "M1"
+                    module_num = moduleId.replace("module-", "")
+                    target_module = f"M{module_num}"
+                elif moduleId.startswith("M"):
+                    # Already in correct format
+                    target_module = moduleId
+                else:
+                    # Try to extract number and convert
+                    try:
+                        num = int(moduleId.replace("M", "").replace("module-", ""))
+                        target_module = f"M{num}"
+                    except ValueError:
+                        target_module = "M1"  # Default fallback
             
-            # Find matching activity by type and difficulty
-            chosen = None
-            for activity in EXAMPLE_ACTIVITIES:
-                if (
-                    activity.type == activity_type
-                    and activity.difficulty == reco.difficulty
-                ):
-                    chosen = activity
-                    break
-
-            # Fallback: use first activity or random from examples
+            if not target_module:
+                # Map ML topic to module
+                # M1 = Understanding Instructions (reading/language)
+                # M2 = Basic Numbers & Logic (math)
+                # M3 = Focus & Routine Skills (executive function)
+                topic_to_module = {
+                    "reading": "M1",
+                    "math": "M2",
+                }
+                target_module = topic_to_module.get(reco.topic, "M1")  # Default to M1
+            
+            # Get last completed activity for this user to determine next in sequence
+            last_activity_id = None
+            last_lesson_id = None
+            if logs:
+                # Find last activity with moduleId matching target module
+                for log in logs:
+                    if "activityId" in log:
+                        activity_id = log.get("activityId", "")
+                        if activity_id.startswith("M"):
+                            # Extract module from activityId like "M1_L1_Q1"
+                            last_module = activity_id.split("_")[0]  # "M1"
+                            if last_module == target_module:
+                                last_activity_id = activity_id
+                                # Also extract lessonId for fallback
+                                last_lesson = log.get("lessonId")
+                                if not last_lesson and "_" in activity_id:
+                                    # Extract from "M1_L1_Q1" -> "1.1"
+                                    parts = activity_id.split("_")
+                                    if len(parts) >= 2:
+                                        lesson_num = parts[1].replace("L", "")
+                                        module_num = target_module.replace("M", "")
+                                        last_lesson = f"{module_num}.{lesson_num}"
+                                if last_lesson:
+                                    last_lesson_id = last_lesson
+                                break
+            
+            # Get next activity in sequence for the target module
+            # Pass both activity_id and lesson_id for better tracking
+            chosen = get_next_activity_in_sequence(
+                target_module,
+                last_activity_id=last_activity_id,
+                last_lesson_id=last_lesson_id
+            )
+            
+            # If no sequence-based activity found, fall back to difficulty/type matching
             if chosen is None:
-                count = await interactions_col.count_documents(query)
-                idx = count % len(EXAMPLE_ACTIVITIES)
-                chosen = EXAMPLE_ACTIVITIES[idx]
+                activity_type_map = {
+                    ("reading", "text"): "image_to_word",
+                    ("reading", "audio"): "one_step_instruction",
+                    ("math", "text"): "counting",
+                    ("math", "visual"): "visual_addition",
+                }
+                
+                activity_type = activity_type_map.get((reco.topic, reco.modality), "image_to_word")
+                
+                # Filter by module first, then by type and difficulty
+                module_activities = get_activities_by_module(target_module)
+                for activity in module_activities:
+                    if (
+                        activity.type == activity_type
+                        and activity.difficulty == reco.difficulty
+                    ):
+                        chosen = activity
+                        break
+                
+                # Final fallback: first activity in module
+                if chosen is None and module_activities:
+                    chosen = module_activities[0]
 
             # Convert Pydantic model to dict for JSON response
-            return chosen.dict() if hasattr(chosen, 'dict') else chosen
+            if chosen:
+                return chosen.dict() if hasattr(chosen, 'dict') else chosen.model_dump()
         except Exception as e:
             print(f"Error using new schema, falling back to legacy: {e}")
+            import traceback
+            traceback.print_exc()
             # Fall through to legacy format
 
     # Legacy format fallback
@@ -215,6 +300,15 @@ async def submit_activity(
         )
         doc["sentimentScore"] = sentiment_score
         doc["confusionFlag"] = confusion_flag
+        
+        # Log NLP analysis for performance tracking
+        await log_nlp_analysis(
+            db,
+            payload.userId,
+            payload.feedbackText,
+            sentiment_score,
+            confusion_flag
+        )
 
     await interactions.insert_one(doc)
 
