@@ -64,9 +64,8 @@ export const Navbar = () => {
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
           <Link to="/dashboard" className="flex items-center gap-2">
-            <div className="text-3xl">🧠</div>
             <span className="text-xl font-bold bg-gradient-primary bg-clip-text text-transparent">
-              NeuroPath
+              neuroLearn
             </span>
           </Link>
 
