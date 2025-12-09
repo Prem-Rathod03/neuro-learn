@@ -1,0 +1,17 @@
+{
+  "name": "neuro-learn-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lightweight HTTP backend for Neuro Learn demo data and auth.",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {}
+}
+
+

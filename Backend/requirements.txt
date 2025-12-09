@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+pydantic
+motor
+bcrypt
+python-dotenv
+requests
+pillow
+httpx
+transformers
+torch
+scikit-learn
+joblib
+numpy
+

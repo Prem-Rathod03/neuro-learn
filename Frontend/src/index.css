@@ -1,0 +1,251 @@
+@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* NeuroPath Design System - Calming, accessible colors for neurodiverse learners */
+
+@layer base {
+  :root {
+    /* Base colors - soft, warm neutrals */
+    --background: 40 20% 97%;
+    --foreground: 220 15% 20%;
+
+    /* Card surfaces */
+    --card: 0 0% 100%;
+    --card-foreground: 220 15% 20%;
+
+    /* Popover surfaces */
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 15% 20%;
+
+    /* Primary - Calming teal for main actions */
+    --primary: 185 65% 50%;
+    --primary-foreground: 0 0% 100%;
+    --primary-soft: 185 45% 88%;
+
+    /* Secondary - Soft lavender for secondary actions */
+    --secondary: 250 35% 88%;
+    --secondary-foreground: 250 40% 25%;
+
+    /* Success - Gentle green */
+    --success: 145 50% 55%;
+    --success-foreground: 0 0% 100%;
+    --success-soft: 145 40% 92%;
+
+    /* Reward - Warm golden yellow */
+    --reward: 45 95% 60%;
+    --reward-foreground: 45 60% 15%;
+    --reward-soft: 45 90% 90%;
+
+    /* Muted surfaces */
+    --muted: 220 15% 95%;
+    --muted-foreground: 220 12% 45%;
+
+    /* Accent - Warm peach for highlights */
+    --accent: 20 75% 70%;
+    --accent-foreground: 20 60% 15%;
+    --accent-soft: 20 70% 92%;
+
+    /* Destructive - Softer red */
+    --destructive: 0 65% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Borders and inputs */
+    --border: 220 15% 88%;
+    --input: 220 15% 88%;
+    --ring: 185 65% 50%;
+
+    /* Border radius */
+    --radius: 1rem;
+
+    /* Sidebar (not used in main app but keeping for consistency) */
+    --sidebar-background: 40 20% 97%;
+    --sidebar-foreground: 220 15% 20%;
+    --sidebar-primary: 185 65% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 15% 95%;
+    --sidebar-accent-foreground: 220 15% 20%;
+    --sidebar-border: 220 15% 88%;
+    --sidebar-ring: 185 65% 50%;
+
+    /* Gradient definitions */
+    --gradient-primary: linear-gradient(135deg, hsl(185 65% 50%), hsl(195 70% 55%));
+    --gradient-reward: linear-gradient(135deg, hsl(45 95% 60%), hsl(35 90% 65%));
+    --gradient-success: linear-gradient(135deg, hsl(145 50% 55%), hsl(155 55% 60%));
+    --gradient-soft: linear-gradient(180deg, hsl(40 20% 99%), hsl(40 20% 97%));
+
+    /* Shadows */
+    --shadow-sm: 0 2px 8px hsl(220 15% 20% / 0.05);
+    --shadow-md: 0 4px 16px hsl(220 15% 20% / 0.08);
+    --shadow-lg: 0 8px 32px hsl(220 15% 20% / 0.12);
+    --shadow-primary: 0 8px 24px hsl(185 65% 50% / 0.25);
+    --shadow-reward: 0 8px 24px hsl(45 95% 60% / 0.3);
+
+    /* Transitions */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: all 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  }
+
+  .dark {
+    /* Dark mode - high contrast, reduced blue light */
+    --background: 220 20% 12%;
+    --foreground: 40 15% 92%;
+
+    --card: 220 18% 15%;
+    --card-foreground: 40 15% 92%;
+
+    --popover: 220 18% 15%;
+    --popover-foreground: 40 15% 92%;
+
+    --primary: 185 60% 55%;
+    --primary-foreground: 220 20% 12%;
+    --primary-soft: 185 40% 25%;
+
+    --secondary: 250 25% 25%;
+    --secondary-foreground: 250 30% 92%;
+
+    --success: 145 45% 50%;
+    --success-foreground: 220 20% 12%;
+    --success-soft: 145 35% 20%;
+
+    --reward: 45 85% 55%;
+    --reward-foreground: 220 20% 12%;
+    --reward-soft: 45 60% 25%;
+
+    --muted: 220 15% 20%;
+    --muted-foreground: 220 12% 65%;
+
+    --accent: 20 65% 60%;
+    --accent-foreground: 220 20% 12%;
+    --accent-soft: 20 50% 25%;
+
+    --destructive: 0 60% 55%;
+    --destructive-foreground: 40 15% 92%;
+
+    --border: 220 15% 22%;
+    --input: 220 15% 22%;
+    --ring: 185 60% 55%;
+
+    --sidebar-background: 220 20% 12%;
+    --sidebar-foreground: 40 15% 92%;
+    --sidebar-primary: 185 60% 55%;
+    --sidebar-primary-foreground: 220 20% 12%;
+    --sidebar-accent: 220 15% 20%;
+    --sidebar-accent-foreground: 40 15% 92%;
+    --sidebar-border: 220 15% 22%;
+    --sidebar-ring: 185 60% 55%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(185 60% 55%), hsl(195 65% 60%));
+    --gradient-reward: linear-gradient(135deg, hsl(45 85% 55%), hsl(35 80% 60%));
+    --gradient-success: linear-gradient(135deg, hsl(145 45% 50%), hsl(155 50% 55%));
+    --gradient-soft: linear-gradient(180deg, hsl(220 18% 15%), hsl(220 20% 12%));
+
+    --shadow-sm: 0 2px 8px hsl(0 0% 0% / 0.2);
+    --shadow-md: 0 4px 16px hsl(0 0% 0% / 0.3);
+    --shadow-lg: 0 8px 32px hsl(0 0% 0% / 0.4);
+    --shadow-primary: 0 8px 24px hsl(185 60% 55% / 0.3);
+    --shadow-reward: 0 8px 24px hsl(45 85% 55% / 0.35);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-body antialiased;
+    font-family: 'Lexend', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  /* Font size classes for accessibility */
+  body.text-size-small {
+    font-size: 14px;
+  }
+
+  body.text-size-medium {
+    font-size: 16px;
+  }
+
+  body.text-size-large {
+    font-size: 18px;
+  }
+
+  /* Distraction-free mode */
+  .distraction-free * {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  /* Focus visible styles for accessibility */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-primary ring-offset-2 ring-offset-background;
+  }
+
+  /* Smooth scrolling */
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 12px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-muted;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-muted-foreground/30 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/50;
+  }
+}
+
+/* Utility classes */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .gradient-primary {
+    background: var(--gradient-primary);
+  }
+
+  .gradient-reward {
+    background: var(--gradient-reward);
+  }
+
+  .gradient-success {
+    background: var(--gradient-success);
+  }
+
+  .gradient-soft {
+    background: var(--gradient-soft);
+  }
+
+  .shadow-soft {
+    box-shadow: var(--shadow-sm);
+  }
+
+  .shadow-card {
+    box-shadow: var(--shadow-md);
+  }
+
+  .shadow-elevated {
+    box-shadow: var(--shadow-lg);
+  }
+
+  .shadow-primary-glow {
+    box-shadow: var(--shadow-primary);
+  }
+
+  .shadow-reward-glow {
+    box-shadow: var(--shadow-reward);
+  }
+}
